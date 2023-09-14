@@ -8,7 +8,7 @@ const VALUES_PER_CHUNK: usize = 128;
 /// think of it as a HashMap<TId, TValue>, optimized for the case in which we know the `TId`s are
 /// contiguous.
 pub struct Mapping<TId: ArenaId, TValue> {
-    chunks: Vec<Vec<Option<TValue>>>,
+    chunks: Vec<[Option<TValue>; VALUES_PER_CHUNK]>,
     len: usize,
     _phantom: PhantomData<TId>,
 }
@@ -29,7 +29,7 @@ impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
         let n = cmp::max(1, n);
         let n_chunks = (n - 1) / VALUES_PER_CHUNK + 1;
         let mut chunks = Vec::new();
-        chunks.resize_with(n_chunks, || vec![None; VALUES_PER_CHUNK]);
+        chunks.resize_with(n_chunks, || std::array::from_fn(|_| None));
         Self {
             chunks,
             len: 0,
@@ -53,7 +53,7 @@ impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
         if chunk > self.chunks.len() {
             self.chunks
                 .resize_with((chunk - 1) / VALUES_PER_CHUNK + 1, || {
-                    vec![None; VALUES_PER_CHUNK]
+                    std::array::from_fn(|_| None)
                 });
         }
         self.chunks[chunk][offset] = Some(value);
@@ -121,5 +121,43 @@ impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
     /// theses slots are not initialized
     pub fn slots(&self) -> usize {
         self.chunks.len() * VALUES_PER_CHUNK
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::arena::ArenaId;
+
+    struct Id {
+        id: usize,
+    }
+
+    impl ArenaId for Id {
+        fn from_usize(x: usize) -> Self {
+            Id { id: x }
+        }
+
+        fn to_usize(self) -> usize {
+            self.id
+        }
+    }
+
+    #[test]
+    pub fn test_mapping() {
+        let mut mapping = super::Mapping::<Id, usize>::new();
+        assert_eq!(mapping.len(), 0);
+        assert_eq!(mapping.slots(), super::VALUES_PER_CHUNK);
+
+        mapping.insert(Id::from_usize(0), 10);
+        assert_eq!(mapping.len(), 1);
+        assert_eq!(mapping.get(Id::from_usize(0)).unwrap(), 10);
+
+        mapping.insert(Id::from_usize(super::VALUES_PER_CHUNK), 20);
+        assert_eq!(
+            mapping
+                .get(Id::from_usize(super::VALUES_PER_CHUNK))
+                .unwrap(),
+            20
+        );
     }
 }

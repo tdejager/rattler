@@ -16,8 +16,8 @@ impl DecisionAndLevel {
         DecisionAndLevel(0)
     }
 
-    fn set(&mut self, value: bool, level: u32) {
-        self.0 = if value { level as i64 } else { -(level as i64) };
+    fn new(value: bool, level: u32) -> Self {
+        Self(if value { level as i64 } else { -(level as i64) })
     }
 
     fn value(self) -> Option<bool> {
@@ -54,7 +54,8 @@ impl DecisionMap {
     }
 
     pub(crate) fn set(&mut self, solvable_id: SolvableId, value: bool, level: u32) {
-        self.map.get(solvable_id).unwrap().set(value, level);
+        self.map
+            .insert(solvable_id, DecisionAndLevel::new(value, level));
     }
 
     pub(crate) fn level(&self, solvable_id: SolvableId) -> u32 {

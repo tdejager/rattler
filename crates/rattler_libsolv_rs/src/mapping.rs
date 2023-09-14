@@ -1,5 +1,6 @@
 use crate::arena::ArenaId;
 use std::cmp;
+use std::iter::FusedIterator;
 use std::marker::PhantomData;
 
 const VALUES_PER_CHUNK: usize = 128;
@@ -7,7 +8,7 @@ const VALUES_PER_CHUNK: usize = 128;
 /// A `Mapping<TValue>` holds a collection of `TValue`s that can be addressed by `TId`s. You can
 /// think of it as a HashMap<TId, TValue>, optimized for the case in which we know the `TId`s are
 /// contiguous.
-pub struct Mapping<TId: ArenaId, TValue> {
+pub struct Mapping<TId, TValue> {
     chunks: Vec<[Option<TValue>; VALUES_PER_CHUNK]>,
     len: usize,
     _phantom: PhantomData<TId>,
@@ -19,7 +20,7 @@ impl<TId: ArenaId, TValue: Clone> Default for Mapping<TId, TValue> {
     }
 }
 
-impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
+impl<TId: ArenaId, TValue> Mapping<TId, TValue> {
     pub(crate) fn new() -> Self {
         Self::with_capacity(1)
     }
@@ -122,7 +123,49 @@ impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
     pub fn slots(&self) -> usize {
         self.chunks.len() * VALUES_PER_CHUNK
     }
+
+    /// Returns an iterator over all the existing key value pairs.
+    pub fn iter(&self) -> MappingIter<TId, TValue> {
+        MappingIter {
+            mapping: self,
+            offset: 0,
+        }
+    }
 }
+
+pub struct MappingIter<'a, TId, TValue> {
+    mapping: &'a Mapping<TId, TValue>,
+    offset: usize,
+}
+
+impl<'a, TId: ArenaId, TValue> Iterator for MappingIter<'a, TId, TValue> {
+    type Item = (TId, &'a TValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.offset >= self.mapping.len {
+                return None;
+            }
+
+            let (chunk, offset) = Mapping::<TId, TValue>::chunk_and_offset(self.offset);
+            let id = TId::from_usize(self.offset);
+            self.offset += 1;
+
+            unsafe {
+                if let Some(value) = &self
+                    .mapping
+                    .chunks
+                    .get_unchecked(chunk)
+                    .get_unchecked(offset)
+                {
+                    break Some((id, value));
+                }
+            }
+        }
+    }
+}
+
+impl<'a, TId: ArenaId, TValue> FusedIterator for MappingIter<'a, TId, TValue> {}
 
 #[cfg(test)]
 mod tests {

@@ -97,7 +97,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
         self.add_clauses_for_root_deps(&favored_map);
 
         // Add clauses ensuring only a single candidate per package name is installed
-        for candidates in self.pool.packages_by_name.values() {
+        for (_, candidates) in self.pool.packages_by_name.iter() {
             // Each candidate gets a clause with each other candidate
             for (i, &candidate) in candidates.iter().enumerate() {
                 for &other_candidate in &candidates[i + 1..] {

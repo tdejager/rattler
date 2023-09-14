@@ -48,12 +48,12 @@ impl<VS: VersionSet, N: PackageName> Default for Pool<VS, N> {
 
             names_to_ids: Default::default(),
             package_names: Arena::new(),
-            packages_by_name: Mapping::empty(),
+            packages_by_name: Mapping::new(),
 
             version_set_to_id: Default::default(),
             version_sets: Arena::new(),
-            match_spec_to_sorted_candidates: Mapping::empty(),
-            match_spec_to_forbidden: Mapping::empty(),
+            match_spec_to_sorted_candidates: Mapping::new(),
+            match_spec_to_forbidden: Mapping::new(),
         }
     }
 }
@@ -70,7 +70,7 @@ impl<VS: VersionSet, N: PackageName> Pool<VS, N> {
 
         let solvable_id = self.solvables.alloc(Solvable::new_package(name_id, record));
 
-        self.packages_by_name[name_id].push(solvable_id);
+        self.packages_by_name.insert(name_id, vec![solvable_id]);
 
         solvable_id
     }
@@ -131,7 +131,7 @@ impl<VS: VersionSet, N: PackageName> Pool<VS, N> {
                 let next_id = self.package_names.alloc(e.key().clone());
 
                 // Keep the mapping in sync
-                self.packages_by_name.extend(Vec::new());
+                self.packages_by_name.insert(next_id, Vec::new());
 
                 e.insert(next_id);
                 next_id
@@ -162,7 +162,9 @@ impl<VS: VersionSet, N: PackageName> Pool<VS, N> {
     pub fn find_matching_solvables(&self, version_set_id: VersionSetId) -> Vec<SolvableId> {
         let (name_id, version_set) = &self.version_sets[version_set_id];
 
-        self.packages_by_name[*name_id]
+        self.packages_by_name
+            .get(*name_id)
+            .unwrap()
             .iter()
             .cloned()
             .filter(|&solvable| version_set.contains(self.solvables[solvable].package().inner()))
@@ -173,7 +175,9 @@ impl<VS: VersionSet, N: PackageName> Pool<VS, N> {
     pub fn find_unmatched_solvables(&self, version_set_id: VersionSetId) -> Vec<SolvableId> {
         let (name_id, version_set) = &self.version_sets[version_set_id];
 
-        self.packages_by_name[*name_id]
+        self.packages_by_name
+            .get(*name_id)
+            .unwrap()
             .iter()
             .cloned()
             .filter(|&solvable| !version_set.contains(self.solvables[solvable].package().inner()))

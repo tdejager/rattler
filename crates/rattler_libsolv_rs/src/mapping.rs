@@ -1,56 +1,125 @@
 use crate::arena::ArenaId;
+use std::cmp;
 use std::marker::PhantomData;
-use std::ops::{Index, IndexMut};
+
+const VALUES_PER_CHUNK: usize = 128;
 
 /// A `Mapping<TValue>` holds a collection of `TValue`s that can be addressed by `TId`s. You can
 /// think of it as a HashMap<TId, TValue>, optimized for the case in which we know the `TId`s are
 /// contiguous.
-#[derive(Default)]
 pub struct Mapping<TId: ArenaId, TValue> {
-    data: Vec<TValue>,
-    phantom: PhantomData<TId>,
+    chunks: Vec<Vec<Option<TValue>>>,
+    len: usize,
+    _phantom: PhantomData<TId>,
 }
 
-impl<TId: ArenaId, TValue> Mapping<TId, TValue> {
-    pub(crate) fn empty() -> Self {
-        Self::new(Vec::new())
+impl<TId: ArenaId, TValue: Clone> Default for Mapping<TId, TValue> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<TId: ArenaId, TValue: Clone> Mapping<TId, TValue> {
+    pub(crate) fn new() -> Self {
+        Self::with_capacity(1)
     }
 
-    /// TODO: if we get rid of the `init` for the cache this need not be public
-    pub fn new(data: Vec<TValue>) -> Self {
+    /// Constructs a new arena with a capacity for `n` values pre-allocated.
+    pub fn with_capacity(n: usize) -> Self {
+        let n = cmp::max(1, n);
+        let n_chunks = (n - 1) / VALUES_PER_CHUNK + 1;
+        let mut chunks = Vec::new();
+        chunks.resize_with(n_chunks, || vec![None; VALUES_PER_CHUNK]);
         Self {
-            data,
-            phantom: PhantomData::default(),
+            chunks,
+            len: 0,
+            _phantom: Default::default(),
         }
     }
 
-    pub(crate) fn get(&self, id: TId) -> Option<&TValue> {
-        self.data.get(id.to_usize())
+    /// Get chunk and offset for specific id
+    #[inline]
+    pub const fn chunk_and_offset(id: usize) -> (usize, usize) {
+        let chunk = id / VALUES_PER_CHUNK;
+        let offset = id % VALUES_PER_CHUNK;
+        (chunk, offset)
     }
 
-    pub(crate) fn extend(&mut self, value: TValue) {
-        self.data.push(value);
+    /// Insert into the mapping with the specific value
+    pub fn insert(&mut self, id: TId, value: TValue) {
+        let (chunk, offset) = Self::chunk_and_offset(id.to_usize());
+
+        // Resize to fit if needed
+        if chunk > self.chunks.len() {
+            self.chunks
+                .resize_with((chunk - 1) / VALUES_PER_CHUNK + 1, || {
+                    vec![None; VALUES_PER_CHUNK]
+                });
+        }
+        self.chunks[chunk][offset] = Some(value);
+        self.len += 1;
     }
 
-    pub(crate) fn values(&self) -> impl Iterator<Item = &TValue> {
-        self.data.iter()
+    /// Get a specific value in the mapping with bound checks
+    pub fn get(&self, id: TId) -> Option<&TValue> {
+        let (chunk, offset) = Self::chunk_and_offset(id.to_usize());
+        if chunk > self.chunks.len() {
+            return None;
+        }
+
+        // Safety: we know that the chunk and offset are valid
+        unsafe {
+            self.chunks
+                .get_unchecked(chunk)
+                .get_unchecked(offset)
+                .as_ref()
+        }
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
+    /// Get a mutable specific value in the mapping with bound checks
+    pub fn get_mut(&mut self, id: TId) -> Option<&mut TValue> {
+        let (chunk, offset) = Self::chunk_and_offset(id.to_usize());
+        if chunk > self.chunks.len() {
+            return None;
+        }
+
+        // Safety: we know that the chunk and offset are valid
+        unsafe {
+            self.chunks
+                .get_unchecked_mut(chunk)
+                .get_unchecked_mut(offset)
+                .as_mut()
+        }
     }
-}
 
-impl<TId: ArenaId, TValue> Index<TId> for Mapping<TId, TValue> {
-    type Output = TValue;
-
-    fn index(&self, index: TId) -> &Self::Output {
-        &self.data[index.to_usize()]
+    /// Get a specific value in the mapping without bound checks
+    pub unsafe fn get_unchecked(&self, id: TId) -> &TValue {
+        let (chunk, offset) = Self::chunk_and_offset(id.to_usize());
+        self.chunks
+            .get_unchecked(chunk)
+            .get_unchecked(offset)
+            .as_ref()
+            .unwrap()
     }
-}
 
-impl<TId: ArenaId, TValue> IndexMut<TId> for Mapping<TId, TValue> {
-    fn index_mut(&mut self, index: TId) -> &mut Self::Output {
-        &mut self.data[index.to_usize()]
+    /// Get a specific value in the mapping without bound checks
+    pub unsafe fn get_unchecked_mut(&mut self, id: TId) -> &mut TValue {
+        let (chunk, offset) = Self::chunk_and_offset(id.to_usize());
+        self.chunks
+            .get_unchecked_mut(chunk)
+            .get_unchecked_mut(offset)
+            .as_mut()
+            .unwrap()
+    }
+
+    /// Returns the number of mapped items
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Defines the number of slots that can be used
+    /// theses slots are not initialized
+    pub fn slots(&self) -> usize {
+        self.chunks.len() * VALUES_PER_CHUNK
     }
 }

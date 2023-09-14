@@ -51,7 +51,7 @@ impl<VS: VersionSet, N: PackageName, D: DependencyProvider<VS, N>> Solver<VS, N,
             watches: WatchMap::new(),
             learnt_clauses: Arena::new(),
             learnt_clauses_start: ClauseId::null(),
-            learnt_why: Mapping::empty(),
+            learnt_why: Mapping::new(),
             decision_tracker: DecisionTracker::new(pool.solvables.len() as u32),
             pool,
             provider,
@@ -74,7 +74,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
         self.pool.root_solvable_mut().clear();
         self.decision_tracker.clear();
         self.learnt_clauses.clear();
-        self.learnt_why = Mapping::empty();
+        self.learnt_why = Mapping::new();
         self.clauses = vec![ClauseState::new(
             Clause::InstallRoot,
             &self.learnt_clauses,
@@ -114,7 +114,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
         for &locked_solvable_id in &jobs.lock {
             // For each locked solvable, forbid other solvables with the same name
             let name = self.pool.resolve_solvable(locked_solvable_id).name;
-            for &other_candidate in &self.pool.packages_by_name[name] {
+            for &other_candidate in self.pool.packages_by_name.get(name).unwrap() {
                 if other_candidate != locked_solvable_id {
                     self.clauses.push(ClauseState::new(
                         Clause::Lock(locked_solvable_id, other_candidate),
@@ -168,11 +168,10 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
         stack.push(SolvableId::root());
 
         let mut version_set_to_sorted_candidates =
-            Mapping::new(vec![Vec::new(); self.pool.version_sets.len()]);
-        let mut version_set_to_forbidden =
-            Mapping::new(vec![Vec::new(); self.pool.version_sets.len()]);
-        let version_set_to_candidates =
-            Mapping::new(vec![OnceCell::new(); self.pool.version_sets.len()]);
+            Mapping::with_capacity(self.pool.version_sets.len());
+        let mut version_set_to_forbidden = Mapping::with_capacity(self.pool.version_sets.len());
+        let version_set_to_candidates: Mapping<VersionSetId, OnceCell<Vec<SolvableId>>> =
+            Mapping::with_capacity(self.pool.version_sets.len());
         let mut seen_requires = HashSet::new();
         let mut seen_forbidden = HashSet::new();
         let empty_vec = Vec::new();
@@ -195,7 +194,9 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
                     // rather they are a very specific subset of solvables that we know are matched to a `VersionSet`
                     // because otherwise `sort_candidates` makes no sense, you get the first feeling this is a bit weird when
                     // writing the test
-                    let mut candidates = version_set_to_candidates[dep]
+                    let mut candidates = version_set_to_candidates
+                        .get(dep)
+                        .unwrap()
                         .get_or_init(|| self.pool.find_matching_solvables(dep))
                         .clone();
 
@@ -217,7 +218,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
                         }
                     }
 
-                    version_set_to_sorted_candidates[dep] = candidates
+                    version_set_to_sorted_candidates.insert(dep, candidates);
                 }
 
                 for &candidate in version_set_to_sorted_candidates
@@ -246,7 +247,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
                     // Find all the solvables that do not match the constraint version set
                     let forbidden_candidates = self.pool.find_unmatched_solvables(dep);
 
-                    version_set_to_forbidden[dep] = forbidden_candidates;
+                    version_set_to_forbidden.insert(dep, forbidden_candidates);
                 }
 
                 for &solvable_dep in version_set_to_forbidden.get(dep).unwrap_or(&empty_vec) {
@@ -381,7 +382,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
                 }
 
                 // Consider only clauses in which no candidates have been installed
-                let candidates = &self.pool.match_spec_to_sorted_candidates[deps];
+                let candidates = &self.pool.match_spec_to_sorted_candidates.get(deps).unwrap();
                 if candidates
                     .iter()
                     .any(|&c| self.decision_tracker.assigned_value(c) == Some(true))
@@ -693,7 +694,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
 
                 let clause_id =
                     LearntClauseId::from_usize(clause_id.index() - learnt_clauses_start.index());
-                for &cause in &learnt_why[clause_id] {
+                for &cause in learnt_why.get(clause_id).unwrap() {
                     Self::analyze_unsolvable_clause(
                         clauses,
                         learnt_why,
@@ -871,7 +872,7 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
         // Add the clause
         let clause_id = ClauseId::new(self.clauses.len());
         let learnt_id = self.learnt_clauses.alloc(learnt.clone());
-        self.learnt_why.extend(learnt_why);
+        self.learnt_why.insert(learnt_id, learnt_why);
 
         let mut clause = ClauseState::new(
             Clause::Learnt(learnt_id),
@@ -905,8 +906,6 @@ impl<VS: VersionSet, N: PackageName + Display, D: DependencyProvider<VS, N>> Sol
     }
 
     fn make_watches(&mut self) {
-        self.watches.initialize(self.pool.solvables.len());
-
         // Watches are already initialized in the clauses themselves, here we build a linked list for
         // each package (a clause will be linked to other clauses that are watching the same package)
         for (i, clause) in self.clauses.iter_mut().enumerate() {

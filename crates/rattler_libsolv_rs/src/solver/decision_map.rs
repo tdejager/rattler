@@ -41,7 +41,7 @@ pub(crate) struct DecisionMap {
 impl DecisionMap {
     pub(crate) fn new(solvable_count: u32) -> Self {
         Self {
-            map: Mapping::new(vec![DecisionAndLevel::undecided(); solvable_count as usize]),
+            map: Mapping::with_capacity(solvable_count as usize),
         }
     }
 
@@ -50,18 +50,18 @@ impl DecisionMap {
     }
 
     pub(crate) fn reset(&mut self, solvable_id: SolvableId) {
-        self.map[solvable_id] = DecisionAndLevel::undecided();
+        self.map.insert(solvable_id, DecisionAndLevel::undecided());
     }
 
     pub(crate) fn set(&mut self, solvable_id: SolvableId, value: bool, level: u32) {
-        self.map[solvable_id].set(value, level);
+        self.map.get(solvable_id).unwrap().set(value, level);
     }
 
     pub(crate) fn level(&self, solvable_id: SolvableId) -> u32 {
-        self.map[solvable_id].level()
+        self.map.get(solvable_id).unwrap().level()
     }
 
     pub(crate) fn value(&self, solvable_id: SolvableId) -> Option<bool> {
-        self.map[solvable_id].value()
+        self.map.get(solvable_id).unwrap().value()
     }
 }

@@ -144,14 +144,21 @@ mod tests {
 
     #[test]
     pub fn test_mapping() {
+        // New mapping should have 128 slots per default
         let mut mapping = super::Mapping::<Id, usize>::new();
         assert_eq!(mapping.len(), 0);
         assert_eq!(mapping.slots(), super::VALUES_PER_CHUNK);
 
+        // Inserting a value should increase the length
+        // and the number of slots should stay the same
         mapping.insert(Id::from_usize(0), 10);
         assert_eq!(mapping.len(), 1);
-        assert_eq!(mapping.get(Id::from_usize(0)).unwrap(), 10);
 
+        // Should be able to get it
+        assert_eq!(mapping.get(Id::from_usize(0)).unwrap(), 10);
+        assert_eq!(mapping.slots(), super::VALUES_PER_CHUNK);
+
+        // Inserting higher than the slot size should trigger a resize
         mapping.insert(Id::from_usize(super::VALUES_PER_CHUNK), 20);
         assert_eq!(
             mapping
@@ -159,5 +166,10 @@ mod tests {
                 .unwrap(),
             20
         );
+
+        // Now contains 2 elements
+        assert_eq!(mapping.len(), 2);
+        // And double number of slots due to resize
+        assert_eq!(mapping.slots(), super::VALUES_PER_CHUNK * 2);
     }
 }
